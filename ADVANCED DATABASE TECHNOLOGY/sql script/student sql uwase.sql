@@ -1,9 +1,12 @@
-
 -- NAMES:UWASE Esperancere
 -- REG:223027305
 
 -- ADVANCE DATABASE TECHONOLOGY
 
+--1. Create all tables and apply integrity constrains
+--2.Apply CASCADE DELETE between Loan->Payment
+
+-- DDL for Customer
 CREATE TABLE Customer(
 CustomerID varchar(255) PRIMARY KEY,
 firtName varchar(255) NOT NULL,
@@ -13,6 +16,8 @@ Phone Varchar(255) NOT NULL,
 City Varchar(255) NOT NULL
 );
 select * from Customer ;
+
+-- DDL for Account
 CREATE TABLE Account(
 AccountID INT PRIMARY KEY,
 CustomerID Varchar (255) NOT NULL,
@@ -22,7 +27,8 @@ DateOpened Date NOT NULL,
 Status Varchar(255)NOT NULL
 );
 select * from Account ;
-DROP TABLE Teller;
+
+-- DDL for Teller
 CREATE TABLE Teller(
 TellerID Varchar(255) PRIMARY KEY,
 FirstName Varchar (255) NOT NULL,
@@ -32,6 +38,7 @@ Contract Varchar(255) NOT NULL
 );
 select *from teller;
 
+-- DDL for Transaction
 CREATE TABLE Transactions (
 TransID INT PRIMARY KEY,
 AccountID Varchar(255) NOT NULL,
@@ -41,6 +48,8 @@ classtype varchar (255) NOT NULL,
 DataPerformed varchar (255) NOT NULL
 );
 select * from Transactions; 
+
+-- DDL for Loan
 CREATE TABLE Loan(
 LoanID INT PRIMARY KEY,
 AccountID Varchar(255) NOT NULL,
@@ -50,7 +59,7 @@ StartDate Date NOT NULL,
 EndDate Date NOT NULL,
 Status Varchar (255) NOT NULL
 );
-select * from Loan ;
+-- DDL for Payment
 CREATE TABLE Payment(
 PaymentID INT PRIMARY KEY,
 Amount decimal(10,2) NOT NULL,
@@ -59,7 +68,8 @@ methodmode varchar (255) NOT NULL,
 LoanID INT REFERENCES Loan(LoanID) on DELETE CASCADE
 );
 select *from Payment ;
-.....3
+--- 3.Insert 5 customers and 10 transaction
+
 INSERT INTO Customer(CustomerID,firtName,LastName,Email,Phone,City)
 VALUES
 (1,'UWASE','Esperance','esperanceuwase12@gmail.com','0784567321','Kigali'),
@@ -81,7 +91,9 @@ VALUES
 (9, 'AC009', 'T003',  800.00, 'Withdrawal', '2025-10-09'),
 (10,'AC010', 'T001', 1200.00, 'Deposit', '2025-10-10');
 select*from Account;
-....4
+
+--- 4. Retrieve customers with highest account balances.
+
 INSERT INTO Account (AccountID, CustomerID, Accounttype, Balance, DateOpened, Status)
 VALUES
     (1, 101, 'Savings', 5000, '2025-01-10', 'Active'),
@@ -96,7 +108,7 @@ JOIN Account a ON c.CustomerID = a.CustomerID
 WHERE a.Balance = (
  SELECT MAX(Balance) FROM Account
 );
-......5
+---5.Update account balance after transaction
  
  UPDATE Account
 SET Balance = Balance + 1000  -- deposit amount
@@ -117,7 +129,7 @@ VALUES
 	-- Make both columns integers:
 
 
-
+--- 6. Identify tellers handing most transaction
 SELECT 
     t.TellerID,
     t.FirstName || ' ' || t.LastName AS Name,
@@ -133,7 +145,6 @@ HAVING COUNT(tr.transid) = (
     ) sub
 );
 
-----6
 INSERT INTO Loan (LoanID, AccountID, Amount, InterestRate, StartDate, EndDate, Status)
 VALUES
 (1, 'AC001', 5000.00, 5.5, '2025-09-01', '2026-09-01', 'Active'),
@@ -143,7 +154,7 @@ VALUES
 (5, 'AC005', 3000.00, 5.0, '2025-10-01', '2026-10-01', 'Active');
 select*from Loan ;
 
-.......7
+---7.create a view showing total loan repayments per month
 
 CREATE TABLE LoanRepayments (
     RepaymentID SERIAL PRIMARY KEY,
@@ -152,8 +163,8 @@ CREATE TABLE LoanRepayments (
     RepaymentDate DATE
 );
 select * from loanRepayments;
-   .....8
    
+ ---8.implement a trigger blocking withdrawals execeeding current balance  
    CREATE TABLE Accounts (
     AccountID SERIAL PRIMARY KEY,
     AccountHolder VARCHAR(100),
@@ -170,11 +181,16 @@ CREATE TABLE Transactions (
 );
 select * from tra
 -- Suppose account 1 has balance 500
-INSERT INTO transactions (transactionid, accountid, amount)
+INSERT INTO Transactions (Transactionid, accountid, amount)
 VALUES (1, 1, -600);  -- This will fail
+
+
+Select *from  transactions ;
+
 
 INSERT INTO transaction (transactionid, accountid, amount)
 
 VALUES (2, 1, -400);  -- This will succeed
+
 
 
