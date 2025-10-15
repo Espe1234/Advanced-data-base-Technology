@@ -1,3 +1,4 @@
+
 -- NAMES:UWASE Esperancere
 -- REG:223027305
 
@@ -28,6 +29,7 @@ Status Varchar(255)NOT NULL
 );
 select * from Account ;
 
+
 -- DDL for Teller
 CREATE TABLE Teller(
 TellerID Varchar(255) PRIMARY KEY,
@@ -37,6 +39,7 @@ Branch Varchar (255) NOT NULL,
 Contract Varchar(255) NOT NULL
 );
 select *from teller;
+
 
 -- DDL for Transaction
 CREATE TABLE Transactions (
@@ -50,6 +53,7 @@ DataPerformed varchar (255) NOT NULL
 select * from Transactions; 
 
 -- DDL for Loan
+
 CREATE TABLE Loan(
 LoanID INT PRIMARY KEY,
 AccountID Varchar(255) NOT NULL,
@@ -59,56 +63,117 @@ StartDate Date NOT NULL,
 EndDate Date NOT NULL,
 Status Varchar (255) NOT NULL
 );
+
+
 -- DDL for Payment
-CREATE TABLE Payment(
-PaymentID INT PRIMARY KEY,
-Amount decimal(10,2) NOT NULL,
-PaymentDate Date NOT NULL,
-methodmode varchar (255) NOT NULL,
-LoanID INT REFERENCES Loan(LoanID) on DELETE CASCADE
+CREATE TABLE Payment (
+    PaymentID INT PRIMARY KEY,
+    Amount DECIMAL(10,2) NOT NULL,
+    PaymentDate DATE NOT NULL,
+    methodmode VARCHAR(255) NOT NULL,
+    LoanID INT NOT NULL,
+    CONSTRAINT fk_payment_loan FOREIGN KEY (LoanID)REFERENCES Loan(LoanID)
+        );
+		
+
+
+-- DDL LoanRepayments
+
+CREATE TABLE LoanRepayments (
+    RepaymentID SERIAL PRIMARY KEY,
+    LoanID INT,
+    Amount NUMERIC(12,2),
+    RepaymentDate DATE
 );
-select *from Payment ;
---- 3.Insert 5 customers and 10 transaction
+select * from loanRepayments;
 
-INSERT INTO Customer(CustomerID,firtName,LastName,Email,Phone,City)
-VALUES
-(1,'UWASE','Esperance','esperanceuwase12@gmail.com','0784567321','Kigali'),
-(2,'SHEMA','Eric','shema4@gmail.com','078654321','Musanze'),
-(3,'UWERA','Divine','uweradivine86@gmail.com','0798654321','Kigali'),
-(4,'IYIZIRE','Auspice','iyizireau321@gmail.com','0735214578','Huye'),
-(5,'UWIMPUWE','Ruth','uwiruth87@gmail.com','0786543206','Rubavu');
-select*from transactions ;
-INSERT INTO transactions (TransID,AccountID,TellerID,Amount,Classtype,Dataperformed)
-VALUES
-(11, 'AC001', 'T001', 1500.00, 'Deposit', '2025-10-01'),
-(2, 'AC002', 'T002',  200.00, 'Withdrawal', '2025-10-02'),
-(3, 'AC003', 'T008',  500.00, 'Deposit', '2025-10-03'),
-(4, 'AC004', 'T003', 1000.00, 'Transfer', '2025-10-04'),
-(5, 'AC005', 'T001',  700.00, 'Withdrawal', '2025-10-05'),
-(6, 'AC006', 'T002', 2500.00, 'Deposit', '2025-10-06'),
-(7, 'AC007', 'T004',  300.00, 'Transfer', '2025-10-07'),
-(8, 'AC008', 'T002',  450.00, 'Deposit', '2025-10-08'),
-(9, 'AC009', 'T003',  800.00, 'Withdrawal', '2025-10-09'),
-(10,'AC010', 'T001', 1200.00, 'Deposit', '2025-10-10');
-select*from Account;
+-- TASK 3: Insert the Data INTO tables
 
---- 4. Retrieve customers with highest account balances.
-
-INSERT INTO Account (AccountID, CustomerID, Accounttype, Balance, DateOpened, Status)
+INSERT INTO Customer (CustomerID, firtName, LastName, Email, Phone, City)
 VALUES
-    (1, 101, 'Savings', 5000, '2025-01-10', 'Active'),
-    (2, 102, 'Current', 7500, '2025-02-15', 'Active'),
-    (3, 103, 'Savings', 7500, '2025-03-20', 'Active'),
-    (4, 104, 'Current', 3000, '2025-04-05', 'Inactive'),
-    (5, 105, 'Savings', 6000, '2025-05-12', 'Active');
-  
+('C001', 'Alice', 'Mukamana', 'alice.mukamana@example.com', '+250788111111', 'Kigali'),
+('C002', 'John', 'Habimana', 'john.habimana@example.com', '+250788222222', 'Musanze'),
+('C003', 'Grace', 'Uwizeye', 'grace.uwizeye@example.com', '+250788333333', 'Huye'),
+('C004', 'David', 'Nshimiyimana', 'david.nshimiyimana@example.com', '+250788444444', 'Rubavu'),
+('C005', 'Sarah', 'Uwimana', 'sarah.uwimana@example.com', '+250788555555', 'Rwamagana'),
+('C006', 'Eric', 'Mugisha', 'eric.mugisha@example.com', '+250788666666', 'Kayonza');
+
+
+INSERT INTO Account (AccountID, CustomerID, AccountType, Balance, DateOpened, Status)
+VALUES
+(1001, 'C001', 'Savings', 2500.00, '2024-03-15', 'Active'),
+(1002, 'C002', 'Current', 5200.50, '2024-04-10', 'Active'),
+(1003, 'C003', 'Fixed Deposit', 10000.00, '2024-05-05', 'Inactive'),
+(1004, 'C004', 'Savings', 750.75, '2024-06-12', 'Active'),
+(1005, 'C005', 'Business', 8300.00, '2024-07-20', 'Active');
+
+
+INSERT INTO Teller (TellerID, FirstName, LastName, Branch, Contract)
+VALUES
+('T001', 'Patrick', 'Niyonzima', 'Kigali Main', 'Full-Time'),
+('T002', 'Claudine', 'Uwimana', 'Musanze Branch', 'Part-Time'),
+('T003', 'Innocent', 'Habyarimana', 'Rubavu Branch', 'Full-Time'),
+('T004', 'Diane', 'Mukeshimana', 'Huye Branch', 'Contract'),
+('T005', 'Emmanuel', 'Murenzi', 'Rwamagana Branch', 'Full-Time'),
+('T006', 'Alice', 'Uwase', 'Kayonza Branch', 'Part-Time');
+
+
+INSERT INTO Payment (PaymentID, Amount, PaymentDate, methodmode, LoanID)
+VALUES
+(1, 500.00, '2025-10-10', 'Credit Card', 102),
+(2, 750.50, '2025-10-11', 'Cash', 102),
+(3, 1200.00, '2025-10-12', 'Mobile Money', 103),
+(4, 300.75, '2025-10-13', 'Bank Transfer', 104),
+(5, 950.00, '2025-10-14', 'Debit Card', 105),
+(6, 1100.25, '2025-10-15', 'Online Payment', 102),
+(7, 650.00, '2025-10-16', 'Credit Card', 103),
+(8, 400.00, '2025-10-17', 'Cash', 104);
+
+
+INSERT INTO Transactions (TransID, AccountID, TellerID, Amount, classtype, DataPerformed)
+VALUES
+(1, '1001', 'T001', 500.00, 'Deposit', '2025-10-10'),
+(2, '1002', 'T002', 1200.00, 'Withdrawal', '2025-10-11'),
+(3, '1003', 'T003', 2500.00, 'Transfer', '2025-10-12'),
+(4, '1004', 'T004', 750.50, 'Deposit', '2025-10-13'),
+(5, '1005', 'T005', 1000.00, 'Withdrawal', '2025-10-14');
+
+INSERT INTO Loan (LoanID, AccountID, Amount, InterestRate, StartDate, EndDate, Status)
+VALUES
+(101, '1001', 5000.00, 8.5, '2024-01-15', '2025-01-15', 'Active'),
+(102, '1002', 10000.00, 7.2, '2024-03-01', '2026-03-01', 'Active'),
+(103, '1003', 7500.00, 9.0, '2023-10-10', '2025-10-10', 'Closed'),
+(104, '1004', 3000.00, 10.0, '2024-06-20', '2025-06-20', 'Active'),
+(105, '1005', 15000.00, 6.8, '2023-09-01', '2026-09-01', 'Pending');
+
+
+INSERT INTO Payment (PaymentID, Amount, PaymentDate, methodmode, LoanID)
+VALUES
+(1, 500.00, '2024-02-15', 'Credit Card', 103),
+(2, 750.00, '2024-04-10', 'Cash', 104),
+(3, 1200.00, '2024-06-05', 'Mobile Money', 103),
+(4, 300.00, '2024-07-20', 'Bank Transfer', 104),
+(5, 950.00, '2024-09-25', 'Debit Card', 105);
+
+
+INSERT INTO LoanRepayments (LoanID, Amount, RepaymentDate)
+VALUES
+(101, 500.00, '2024-03-15'),
+(102, 750.00, '2024-05-10'),
+(103, 1200.00, '2024-07-05'),
+(104, 600.00, '2024-08-20');
+
+-- TASK 4: Retrieve customer with highest account balance
+
 SELECT c.CustomerID, c.LastName, a.AccountID, a.Balance
 FROM Customer c
 JOIN Account a ON c.CustomerID = a.CustomerID
 WHERE a.Balance = (
  SELECT MAX(Balance) FROM Account
 );
----5.Update account balance after transaction
+
+
+--- TASK 5.Update account balance after transaction
  
  UPDATE Account
 SET Balance = Balance + 1000  -- deposit amount
@@ -119,17 +184,9 @@ SET Balance = balance - 500   -- withdrawal amount
 WHERE accountid = 1
   AND Balance >= 500;         -- optional check to prevent negative balance
   
-INSERT INTO Teller (TellerID, FirstName, LastName, Branch, Contract)
-VALUES
-    (1, 'Alice', 'Kamanzi', 'Kigali Central', 'Permanent'),
-    (2, 'Brian', 'Uwase', 'Remera', 'Contract'),
-    (3, 'Charles', 'Habimana', 'Kacyiru', 'Permanent'),
-    (4, 'Diane', 'Mukamana', 'Gisozi', 'Contract'),
-    (5, 'Eric', 'Niyonsaba', 'Kimironko', 'Permanent'); 
-	-- Make both columns integers:
 
 
---- 6. Identify tellers handing most transaction
+--- TASK 6. Identify tellers handing most transaction
 SELECT 
     t.TellerID,
     t.FirstName || ' ' || t.LastName AS Name,
@@ -145,52 +202,58 @@ HAVING COUNT(tr.transid) = (
     ) sub
 );
 
-INSERT INTO Loan (LoanID, AccountID, Amount, InterestRate, StartDate, EndDate, Status)
-VALUES
-(1, 'AC001', 5000.00, 5.5, '2025-09-01', '2026-09-01', 'Active'),
-(2, 'AC002', 10000.00, 6.0, '2025-08-15', '2026-08-15', 'Active'),
-(3, 'AC003', 7500.00, 4.5, '2025-07-10', '2026-07-10', 'Active'),
-(4, 'AC004', 12000.00, 7.0, '2025-06-20', '2026-06-20', 'Active'),
-(5, 'AC005', 3000.00, 5.0, '2025-10-01', '2026-10-01', 'Active');
-select*from Loan ;
 
----7.create a view showing total loan repayments per month
+--- TASK 7.create a view showing total loan repayments per month
+CREATE OR REPLACE VIEW MonthlyLoanRepayments AS
+SELECT
+    DATE_TRUNC('month', RepaymentDate) AS RepaymentMonth,
+    SUM(Amount) AS TotalRepayments
+FROM
+    LoanRepayments
+GROUP BY
+    DATE_TRUNC('month', RepaymentDate)
+ORDER BY
+    RepaymentMonth;
 
-CREATE TABLE LoanRepayments (
-    RepaymentID SERIAL PRIMARY KEY,
-    LoanID INT,
-    Amount NUMERIC(12,2),
-    RepaymentDate DATE
-);
-select * from loanRepayments;
-   
- ---8.implement a trigger blocking withdrawals execeeding current balance  
-   CREATE TABLE Accounts (
-    AccountID SERIAL PRIMARY KEY,
-    AccountHolder VARCHAR(100),
-    Balance NUMERIC(12, 2) NOT NULL
-);
-select* from Accounts ;
+SELECT * FROM MonthlyLoanRepayments
 
-CREATE TABLE Transactions (
-    TransactionID SERIAL PRIMARY KEY,
-    AccountID INT REFERENCES Accounts(AccountID),
-    TransactionType VARCHAR(20),   -- e.g. 'Deposit' or 'Withdrawal'
-    Amount NUMERIC(12, 2) NOT NULL,
-    TransactionDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-select * from tra
--- Suppose account 1 has balance 500
-INSERT INTO Transactions (Transactionid, accountid, amount)
-VALUES (1, 1, -600);  -- This will fail
+-- TASK 8: Implement trigger blocking withdrawals exceeding current balance
+CREATE OR REPLACE FUNCTION prevent_overdraft()
+RETURNS TRIGGER AS $$
+DECLARE
+    current_balance DECIMAL(10,2);
+BEGIN
+    -- Only check for withdrawal transactions
+    IF NEW.classtype = 'Withdrawal' THEN
+        -- Get current balance from Account table
+        SELECT Balance INTO current_balance
+        FROM Account
+        WHERE AccountID = NEW.AccountID;
+
+        -- Check if withdrawal exceeds balance
+        IF NEW.Amount > current_balance THEN
+            RAISE EXCEPTION 'Withdrawal amount (%.2f) exceeds current balance (%.2f)', NEW.Amount, current_balance;
+        ELSE
+            -- Update account balance after withdrawal
+            UPDATE Account
+            SET Balance = Balance - NEW.Amount
+            WHERE AccountID = NEW.AccountID;
+        END IF;
+    END IF;
+
+    -- For deposits, add to balance
+    IF NEW.classtype = 'Deposit' THEN
+        UPDATE Account
+        SET Balance = Balance + NEW.Amount
+        WHERE AccountID = NEW.AccountID;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
 
-Select *from  transactions ;
-
-
-INSERT INTO transaction (transactionid, accountid, amount)
-
-VALUES (2, 1, -400);  -- This will succeed
-
-
-
+CREATE TRIGGER check_withdrawal
+BEFORE INSERT ON Transactions
+FOR EACH ROW
+EXECUTE FUNCTION prevent_overdraft();
