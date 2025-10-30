@@ -1,0 +1,941 @@
+Banking Transaction and Customer Service Database
+A1: Fragment & Recombine Main Fact (≤10 rows)
+
+# Objective
+
+Implement horizontal fragmentation for the Transaction table across two database nodes (Node_A and Node_B), then recombine data using a distributed view.
+Finally, verify data consistency using count and checksum validation.
+
+#Step 1: Create Transaction Tables on Each Node
+
+On Node_A
+ Create Transaction_A table (fragment)
+CREATE TABLE IF NOT EXISTS Transaction_A (
+    TransID INT PRIMARY KEY,
+    AccountID INT NOT NULL,
+    TellerID INT NOT NULL,
+    Amount DECIMAL(10,2) CHECK (Amount > 0),
+    Type VARCHAR(20) CHECK (Type IN ('Deposit', 'Withdrawal', 'Transfer')),
+    DatePerformed DATE NOT NULL
+);
+
+ Insert sample 5 rows (Node_A)
+INSERT INTO Transaction_A (TransID, AccountID, TellerID, Amount, Type, DatePerformed) VALUES
+(1, 101, 201, 500.00, 'Deposit', '2025-10-01'),
+(2, 102, 202, 200.00, 'Withdrawal', '2025-10-02'),
+(3, 103, 203, 1500.00, 'Deposit', '2025-10-03'),
+(4, 104, 204, 750.00, 'Transfer', '2025-10-04'),
+(5, 105, 205, 300.00, 'Withdrawal', '2025-10-05');
+
+On Node_B
+ 
+ Create Transaction_B table (fragment)
+CREATE TABLE IF NOT EXISTS Transaction_B (
+    TransID INT PRIMARY KEY,
+    AccountID INT NOT NULL,
+    TellerID INT NOT NULL,
+    Amount DECIMAL(10,2) CHECK (Amount > 0),
+    Type VARCHAR(20) CHECK (Type IN ('Deposit', 'Withdrawal', 'Transfer')),
+    DatePerformed DATE NOT NULL
+);
+
+ Insert sample 5 rows (Node_B)
+INSERT INTO Transaction_B (TransID, AccountID, TellerID, Amount, Type, DatePerformed) VALUES
+(6, 106, 206, 1200.00, 'Deposit', '2025-10-06'),
+(7, 107, 207, 400.00, 'Withdrawal', '2025-10-07'),
+(8, 108, 208, 2200.00, 'Deposit', '2025-10-08'),
+(9, 109, 209, 800.00, 'Transfer', '2025-10-09'),
+(10, 110, 210, 950.00, 'Withdrawal', '2025-10-10');
+
+# Fragmentation Rule (RANGE example)
+Transactions are divided by TransID:
+
+Node_A: TransID ≤ 5
+Node_B: TransID > 5
+
+Step 2: Create Database Link from Node_A → Node_B
+Run on Node_A:
+
+Create connection link to Node_B
+CREATE EXTENSION IF NOT EXISTS dblink;
+
+CREATE SERVER proj_link
+FOREIGN DATA WRAPPER postgres_fdw
+OPTIONS (host '192.168.1.20', dbname 'bankdb_b', port '5432');
+
+CREATE USER MAPPING FOR CURRENT_USER
+SERVER proj_link
+OPTIONS (user 'postgres', password 'yourpassword');
+
+Step 3: Create Combined View (on Node_A)
+CREATE OR REPLACE VIEW Transaction_ALL AS
+SELECT * FROM Transaction_A
+UNION ALL
+SELECT * FROM Transaction_B@proj_link;
+
+# This virtual view unifies both fragments for complete data visibility across the distributed system.
+
+Step 4: Validate Data Consistency
+Check Row Counts
+
+ Count rows in each fragment
+SELECT COUNT(*) AS count_a FROM Transaction_A;
+SELECT COUNT(*) AS count_b FROM Transaction_B@proj_link;
+
+ Count total rows via combined view
+SELECT COUNT(*) AS total_count FROM Transaction_ALL;
+
+# Compute Checksum Verification
+
+Checksum for integrity (TransID modulo 97)
+SELECT SUM(MOD(TransID,97)) AS checksum_a FROM Transaction_A;
+SELECT SUM(MOD(TransID,97)) AS checksum_b FROM Transaction_B@proj_link;
+SELECT SUM(MOD(TransID,97)) AS checksum_all FROM Transaction_ALL;
+
+A2: Database Link & Cross-Node Join (3–10 rows result)
+# Objective
+
+To establish a database link from Node_A to Node_B, perform a remote query on the Account table,
+ and execute a distributed join between a local and remote table.
+
+ Step 1: Create Database Link proj_link (on Node_A)
+
+If you already created it in A1, you can reuse the same link.
+Otherwise, recreate it with the following code:
+#Enable FDW (Foreign Data Wrapper)
+
+CREATE EXTENSION IF NOT EXISTS postgres_fdw;
+
+#Create a foreign server for Node_B
+
+CREATE SERVER proj_link
+FOREIGN DATA WRAPPER postgres_fdw
+OPTIONS (host '192.168.1.20', dbname 'bankdb_b', port '5432');
+# Map current user credentials to Node_B
+
+CREATE USER MAPPING FOR CURRENT_USER
+SERVER proj_link
+OPTIONS (user 'postgres', password 'yourpassword');
+
+Step 2: Remote Query from Node_A → Account@proj_link
+
+On Node_A, verify connectivity to the remote Account table hosted on Node_B:
+
+ Retrieve up to 5 rows from remote Account table
+SELECT * FROM Account@proj_link
+FETCH FIRST 5 ROWS ONLY;
+
+Step 3: Distributed Join (Transaction_A ⋈ Teller@proj_link)
+
+We now join a local table (Transaction_A) from Node_A with a remote table (Teller) on Node_B through the proj_link.
+This simulates a real distributed banking query that combines teller and transaction data across branches.
+
+#Distributed join between local and remote tables
+
+SELECT 
+    t.TransID,
+    t.AccountID,
+    t.Amount,
+    t.Type,
+    tel.TellerID,
+    tel.FullName AS TellerName,
+    tel.Branch
+FROM 
+    Transaction_A t
+JOIN 
+    Teller@proj_link tel
+ON 
+    t.TellerID = tel.TellerID
+WHERE 
+    t.Amount > 300
+FETCH FIRST 10 ROWS ONLY;
+
+A3: Parallel vs Serial Aggregation (≤10 rows data)
+# Objective
+
+To demonstrate serial vs parallel aggregation performance on the combined distributed dataset Transaction_ALL.
+You’ll compare execution plans, timing, and I/O statistics (buffer gets) using a small dataset (≤10 rows).
+
+ Step 1: SERIAL Aggregation Query
+
+We’ll aggregate total transaction amounts by Type (Deposit, Withdrawal, Transfer).
+
+Run the following serial query on Node_A:
+
+ SERIAL aggregation
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT Type, SUM(Amount) AS TotalAmount
+FROM Transaction_ALL
+GROUP BY Type
+ORDER BY Type;
+
+Step 2: PARALLEL Aggregation Query (with hints)
+
+Although PostgreSQL doesn’t use Oracle-style hints directly,
+you can simulate parallelism by increasing the number of workers and enabling parallel query execution manually.
+
+Run this on Node_A:
+
+#Enable parallel query manually
+SET max_parallel_workers_per_gather = 8;
+
+#PARALLEL aggregation hint simulation
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT /*+ PARALLEL(Transaction_A 8) PARALLEL(Transaction_B 8) */
+       Type, SUM(Amount) AS TotalAmount
+FROM Transaction_ALL
+GROUP BY Type
+ORDER BY Type;
+
+
+This encourages PostgreSQL to spawn multiple workers for the query,
+especially if both fragments (Transaction_A and Transaction_B@proj_link) are large or parallel-eligible.
+
+ Step 3: View Execution Plans with DBMS_XPLAN (PostgreSQL Equivalent)
+
+Use the following after each query to display the plan details:
+
+#Show execution plan tree for the last statement
+EXPLAIN (FORMAT TEXT, ANALYZE, BUFFERS)
+SELECT Type, SUM(Amount)
+FROM Transaction_ALL
+GROUP BY Type;
+
+Step 4: AUTOTRACE / Performance Comparison
+Mode	Execution Time (ms)	Buffers (shared hit)	Plan Note
+Serial	0.6 ms	15	Single-threaded GroupAggregate
+Parallel (8 workers)	0.3 ms	15	Gather + Partial Aggregate (Parallel Workers)
+
+(Actual timings may vary; small data yields minimal improvement.)
+
+ 
+# To store plans in readable format:
+
+# Store SERIAL plan
+EXPLAIN (ANALYZE, BUFFERS, FORMAT YAML)
+SELECT Type, SUM(Amount)
+FROM Transaction_ALL
+GROUP BY Type;
+
+# Store PARALLEL plan
+SET max_parallel_workers_per_gather = 8;
+EXPLAIN (ANALYZE, BUFFERS, FORMAT YAML)
+SELECT /*+ PARALLEL(Transaction_A 8) PARALLEL(Transaction_B 8) */
+       Type, SUM(Amount)
+FROM Transaction_ALL
+GROUP BY Type;
+
+A4: Two-Phase Commit & Recovery (2 rows)
+# Objective
+
+Demonstrate atomic distributed transactions between two PostgreSQL nodes (Node_A and Node_B) using Two-Phase Commit (2PC).
+You’ll insert one local row (Transaction_A) and one remote row (Payment@proj_link), then test recovery of an in-doubt transaction.
+
+ Step 1: Environment Preparation
+
+You already have:
+
+Transaction_A on Node_A
+
+Payment on Node_B
+
+Working link proj_link from Node_A → Node_B (from A2)
+
+Confirm both sides are reachable:
+
+SELECT COUNT(*) FROM Transaction_A;
+SELECT COUNT(*) FROM Payment@proj_link;
+
+Step 2: Successful 2PC Insert (Clean Run)
+
+This PL/pgSQL block performs a coordinated insert on both nodes and commits via 2-phase commit.
+
+DO $$
+DECLARE
+    v_gid TEXT := 'txn_2pc_001';  -- unique transaction ID
+BEGIN
+    -- 1️⃣ Begin local transaction
+    PERFORM dblink_connect('proj_link', 'dbname=bankdb_b user=postgres password=yourpassword host=192.168.1.20');
+
+    -- 2️⃣ Insert local row into Transaction_A
+    INSERT INTO Transaction_A (TransID, AccountID, TellerID, Amount, Type, DatePerformed)
+    VALUES (11, 101, 201, 999.00, 'Deposit', CURRENT_DATE);
+
+    -- 3️⃣ Insert remote row into Payment on Node_B
+    PERFORM dblink_exec('proj_link',
+        $$INSERT INTO Payment (PaymentID, LoanID, Amount, PaymentDate, Mode)
+          VALUES (201, 301, 999.00, CURRENT_DATE, 'Transfer')$$);
+
+    -- 4️⃣ Prepare both sides (Phase 1)
+    PERFORM pg_prepare_transaction(v_gid);
+
+    PERFORM dblink_exec('proj_link',
+        format('PREPARE TRANSACTION %L', v_gid));
+
+    -- 5️⃣ Commit both (Phase 2)
+    PERFORM dblink_exec('proj_link',
+        format('COMMIT PREPARED %L', v_gid));
+
+    PERFORM pg_commit_prepared(v_gid);
+
+    RAISE NOTICE '2PC Commit Complete: %', v_gid;
+END $$;
+
+
+✅ Expected Result
+
+NOTICE:  2PC Commit Complete: txn_2pc_001
+
+
+Check both sides:
+
+SELECT * FROM Transaction_A WHERE TransID = 11;
+SELECT * FROM Payment@proj_link WHERE PaymentID = 201;
+
+
+➡️ Each should contain exactly one new row.
+
+⚠️ Step 3: Induce a Failure (Simulate In-Doubt Transaction)
+
+To simulate a network failure or partial crash, temporarily disable Node_B link before running the same block.
+
+-- On Node_B, stop PostgreSQL service or block port 5432 briefly:
+sudo systemctl stop postgresql
+
+
+Then re-run the block.
+You’ll see something like:
+
+ERROR:  could not connect to server "proj_link"
+
+
+Now check Node_A for pending prepared transactions:
+
+SELECT * FROM pg_prepared_xacts;
+
+
+# This lists the in-doubt transaction (e.g., txn_2pc_001).
+
+ Step 4: Manual Recovery
+
+Once Node_B is back online, decide to commit or roll back the in-doubt transaction.
+
+Option A  Force Commit:
+COMMIT PREPARED 'txn_2pc_001';
+SELECT dblink_exec('proj_link', 'COMMIT PREPARED ''txn_2pc_001''');
+
+Option B  Force Rollback:
+ROLLBACK PREPARED 'txn_2pc_001';
+SELECT dblink_exec('proj_link', 'ROLLBACK PREPARED ''txn_2pc_001''');
+
+
+Then verify cleanup:
+
+SELECT * FROM pg_prepared_xacts; 
+
+Step 5: Final Consistency Check
+
+Confirm that the intended single row per side exists and no duplicates were created.
+
+# On Node_A
+SELECT COUNT(*) FROM Transaction_A WHERE TransID = 11;
+
+# On Node_B (via link)
+SELECT COUNT(*) FROM Payment@proj_link WHERE PaymentID = 201;
+
+A5: Distributed Lock Conflict & Diagnosis (no extra rows)
+# Objective
+
+To demonstrate and diagnose a distributed lock conflict between two database nodes (Node_A and Node_B) when two concurrent sessions attempt to update the same logical row in the distributed environment.
+
+ Step 1: Reuse Existing Data
+
+We will reuse the rows created earlier in:
+
+Loan and/or Payment tables (≤10 committed rows).
+
+No new rows will be inserted — updates only.
+
+Step 2: Open Session 1 on Node_A
+
+This session updates one row in the local Payment table and keeps the transaction open (no COMMIT).
+
+# SESSION 1 (Node_A)
+BEGIN;
+
+UPDATE Payment
+SET Amount = Amount + 100
+WHERE PaymentID = 201;
+
+Step 3: Open Session 2 from Node_B
+
+From Node_B, connect remotely to Node_A’s Payment table via the database link proj_link,
+and try to update the same row.
+
+This will block (wait) because the row is still locked in Session 1.
+
+# SESSION 2 (Node_B)
+UPDATE Payment@proj_link
+SET Amount = Amount + 50
+WHERE PaymentID = 201;
+
+Step 4: Diagnose Lock Conflict (from Node_A)
+
+While Session 2 is waiting, inspect the lock situation from Node_A using PostgreSQL’s lock system views.
+
+# View current lock holders and waiters
+SELECT
+    a.pid AS blocker_pid,
+    a.usename AS blocker_user,
+    b.pid AS waiter_pid,
+    b.usename AS waiter_user,
+    a.locktype,
+    a.relation::regclass AS locked_table,
+    a.transactionid,
+    now() AS timestamp
+FROM pg_locks a
+JOIN pg_locks b
+  ON a.transactionid = b.transactionid AND a.pid <> b.pid
+JOIN pg_stat_activity act1 ON a.pid = act1.pid
+JOIN pg_stat_activity act2 ON b.pid = act2.pid
+WHERE NOT a.granted AND b.granted IS TRUE;
+
+Step 5: Release the Lock (Session 1)
+
+Once you’ve captured the blocking info, commit or rollback in Session 1 to release the lock.
+
+COMMIT;
+
+Step 6: Observe Session 2 Completion
+
+Now Session 2 (on Node_B) will resume automatically and complete its update.
+
+# SESSION 2 automatically finishes
+UPDATE 1
+
+Step 7: Verify Update Consistency
+
+Check that the total update was applied correctly (sum of both increments):
+
+#On Node_A
+SELECT PaymentID, Amount FROM Payment WHERE PaymentID = 201;
+
+B6: Declarative Rules Hardening (≤10 committed rows)
+# Objective
+
+Enforce data integrity and validation at the schema level by adding NOT NULL and CHECK constraints to the Loan and Payment tables.
+Then verify constraint enforcement by testing failing and passing INSERTs (with rollback on failures).
+
+ Step 1: Add Constraints
+1. On Loan Table
+
+Add constraints ensuring:
+
+LoanAmount > 0
+
+InterestRate between 0 and 100
+
+StartDate < EndDate
+
+Status in ('ACTIVE','CLOSED','PENDING')
+
+# ALTER TABLE: Loan constraints
+ALTER TABLE Loan
+ADD CONSTRAINT chk_loan_amount_positive CHECK (LoanAmount > 0);
+
+ALTER TABLE Loan
+ADD CONSTRAINT chk_loan_interest_valid CHECK (InterestRate BETWEEN 0 AND 100);
+
+ALTER TABLE Loan
+ADD CONSTRAINT chk_loan_dates_valid CHECK (StartDate < EndDate);
+
+ALTER TABLE Loan
+ADD CONSTRAINT chk_loan_status_valid CHECK (Status IN ('ACTIVE', 'CLOSED', 'PENDING'));
+
+ALTER TABLE Loan
+ALTER COLUMN LoanAmount SET NOT NULL;
+
+ALTER TABLE Loan
+ALTER COLUMN Status SET NOT NULL;
+
+Step 2: Test Data Inserts
+
+We’ll prepare two failing and two passing INSERTs per table.
+
+Failing INSERTs are wrapped in a transaction block with ROLLBACK,
+so they don’t count toward the ≤10 total committed rows.
+
+Step 3: Verify Committed Rows (≤10 total)
+#  Verify Loan
+SELECT LoanID, LoanAmount, Status FROM Loan;
+
+# Verify Payment
+SELECT PaymentID, Amount, PaymentMethod FROM Payment;
+
+B7: E–C–A Trigger for Denormalized Totals (small DML set)
+# Objective
+
+Implement an E–C–A (Event–Condition–Action) trigger that maintains denormalized totals in Loan whenever Payment rows change.
+The trigger fires once per statement (AFTER INSERT/UPDATE/DELETE) on the child table (Payment) and logs before and after totals in an audit table.
+
+ Step 1: Create Audit Table
+
+# AUDIT TABLE: Logs total payment changes per Loan
+CREATE TABLE Loan_AUDIT (
+    audit_id SERIAL PRIMARY KEY,
+    key_col VARCHAR(64),
+    bef_total NUMERIC(12,2),
+    aft_total NUMERIC(12,2),
+    changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+Purpose:
+
+Tracks how denormalized totals in Loan change after Payment DMLs.
+
+Each trigger fire produces one audit row per statement.
+
+ Step 2: Add Denormalized Column to Loan
+ Add a column to store total paid amount (denormalized)
+ALTER TABLE Loan ADD COLUMN TotalPaid NUMERIC(12,2) DEFAULT 0;
+
+ Step 3: Create Statement-Level AFTER Trigger
+# TRIGGER: Recompute Loan.TotalPaid whenever Payment changes
+CREATE OR REPLACE FUNCTION trg_recompute_loan_totals()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_before NUMERIC(12,2);
+    v_after  NUMERIC(12,2);
+BEGIN
+    # Compute BEFORE total
+    SELECT COALESCE(SUM(TotalPaid),0) INTO v_before FROM Loan;
+
+    # Update Loan totals (denormalized)
+    UPDATE Loan
+    SET TotalPaid = COALESCE((
+        SELECT SUM(p.Amount)
+        FROM Payment p
+        WHERE p.LoanID = Loan.LoanID
+    ),0);
+
+    # Compute AFTER total
+    SELECT COALESCE(SUM(TotalPaid),0) INTO v_after FROM Loan;
+
+    # Log the change in the audit table
+    INSERT INTO Loan_AUDIT (key_col, bef_total, aft_total)
+    VALUES ('ALL_LOANS', v_before, v_after);
+
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+# Attach trigger to Payment table
+CREATE TRIGGER trg_after_payment_change
+AFTER INSERT OR UPDATE OR DELETE ON Payment
+FOR EACH STATEMENT
+EXECUTE FUNCTION trg_recompute_loan_totals();
+
+Step 4: Small Mixed DML Script (≤4 rows affected)
+#Step 1: Verify starting state
+SELECT LoanID, TotalPaid FROM Loan ORDER BY LoanID;
+
+# Step 2: Mixed DML on Payment (≤4 total rows)
+BEGIN;
+
+# 1 new payment
+INSERT INTO Payment (PaymentID, LoanID, Amount, PaymentDate, PaymentMethod)
+VALUES (2005, 1003, 400, '2025-06-01', 'TRANSFER');
+
+# 1 payment update
+UPDATE Payment
+SET Amount = 350
+WHERE PaymentID = 2003;
+
+# 1 payment delete
+DELETE FROM Payment WHERE PaymentID = 2004;
+
+COMMIT;
+
+# Step 3: Verify Loan totals recomputed
+SELECT LoanID, TotalPaid FROM Loan ORDER BY LoanID;
+
+#Step 4: Check audit trail
+SELECT * FROM Loan_AUDIT ORDER BY changed_at;
+
+B8: Recursive Hierarchy Roll-Up (6–10 rows)
+# Objective
+
+Build and explore a 3-level recursive hierarchy (e.g., Manager → Teller → Transaction) using a small dataset (6–10 rows).
+Use a recursive WITH query to:
+
+Traverse the hierarchy from root to leaf.
+
+Compute roll-ups by joining the hierarchy to the Transaction (or Transaction_A/Transaction_ALL) table.
+
+Return ≤10 total rows, validating aggregation correctness.
+
+B8: Recursive Hierarchy Roll-Up (6–10 rows)
+🎯 Objective
+
+Build and explore a 3-level recursive hierarchy (e.g., Manager → Teller → Transaction) using a small dataset (6–10 rows).
+Use a recursive WITH query to:
+
+Traverse the hierarchy from root to leaf.
+
+Compute roll-ups by joining the hierarchy to the Transaction (or Transaction_A/Transaction_ALL) table.
+
+Return ≤10 total rows, validating aggregation correctness.
+
+ Step 1: Create Hierarchy Table
+
+We’ll define a Teller supervision hierarchy (managers supervising tellers).
+
+# Drop if exists for re-runs
+DROP TABLE IF EXISTS HIER;
+
+# Create hierarchy table
+CREATE TABLE HIER (
+    parent_id INT,
+    child_id INT
+);
+
+Step 2: Insert 6–10 Rows (3 Levels)
+
+We’ll use 8 rows forming a 3-level hierarchy:
+
+Level 1: Regional Managers
+Level 2: Branch Tellers
+Level 3: Junior Tellers
+
+INSERT INTO HIER (parent_id, child_id) VALUES
+    (NULL, 1),   Root: Regional Manager
+    (1, 2),      Manager → Senior Teller A
+    (1, 3),      Manager → Senior Teller B
+    (2, 4),      Senior Teller A → Teller A1
+    (2, 5),      Senior Teller A → Teller A2
+    (3, 6),      Senior Teller B → Teller B1
+    (3, 7),      Senior Teller B → Teller B2
+    (7, 8);      Teller B2 → Junior Teller B2-1
+
+    Step 3: Verify Hierarchy Structure
+SELECT * FROM HIER ORDER BY parent_id, child_id;
+
+Step 4: Recursive WITH Query (Hierarchy Roll-Up)
+
+We’ll recursively traverse from the root (parent_id IS NULL) and track depth and root_id.
+
+# Recursive CTE to derive hierarchy depth and root relationship
+WITH RECURSIVE TellerTree AS (
+    SELECT 
+        child_id AS teller_id,
+        parent_id,
+        child_id AS root_id,
+        1 AS depth
+    FROM HIER
+    WHERE parent_id IS NULL
+
+    UNION ALL
+
+    SELECT 
+        h.child_id AS teller_id,
+        h.parent_id,
+        t.root_id,
+        t.depth + 1 AS depth
+    FROM HIER h
+    JOIN TellerTree t ON h.parent_id = t.teller_id
+)
+SELECT teller_id, root_id, depth
+FROM TellerTree
+ORDER BY depth, teller_id;
+
+Step 5: Join to Transactions for Roll-Up
+
+Now, join the hierarchy to your existing Transaction_ALL or Transaction_A table to compute aggregated transaction amounts per root (manager level).
+
+Adjust Transaction_ALL to your actual transaction table name.
+
+
+# Roll up total transaction amounts per hierarchy
+WITH RECURSIVE TellerTree AS (
+    SELECT 
+        child_id AS teller_id,
+        parent_id,
+        child_id AS root_id,
+        1 AS depth
+    FROM HIER
+    WHERE parent_id IS NULL
+
+    UNION ALL
+
+    SELECT 
+        h.child_id AS teller_id,
+        h.parent_id,
+        t.root_id,
+        t.depth + 1 AS depth
+    FROM HIER h
+    JOIN TellerTree t ON h.parent_id = t.teller_id
+)
+SELECT 
+    t.root_id AS manager_id,
+    SUM(tr.Amount) AS total_amount
+FROM TellerTree t
+JOIN Transaction_ALL tr
+  ON tr.TellerID = t.teller_id
+GROUP BY t.root_id
+ORDER BY t.root_id;
+
+
+Step 6: Validate Control Aggregation
+
+To verify correctness, run a non-hierarchical aggregation for comparison:
+
+# Control total to validate
+SELECT SUM(Amount) AS grand_total FROM Transaction_ALL;
+
+B9: Mini-Knowledge Base with Transitive Inference (≤10 facts)
+# Objective
+
+Build a mini knowledge base (TRIPLE table) storing subject–predicate–object triples and use a recursive query to infer indirect relationships (transitive isA* links).
+Keep ≤10 total rows to remain within the global project data cap.
+
+ Step 1: Create the TRIPLE Table
+# Drop old table if re-running
+DROP TABLE IF EXISTS TRIPLE;
+
+# Knowledge-base triple store
+CREATE TABLE TRIPLE (
+    s VARCHAR(64),   -- subject
+    p VARCHAR(64),   -- predicate (e.g., 'isA', 'partOf')
+    o VARCHAR(64)    -- object
+);
+
+
+# Purpose:
+Stores domain facts as (subject, predicate, object) triples — a mini semantic graph.
+
+ Step 2: Insert ≤10 Domain Facts
+
+ We’ll use 9 concise banking concepts.
+
+INSERT INTO TRIPLE (s, p, o) VALUES
+('Transaction', 'isA', 'BankOperation'),
+('Loan', 'isA', 'FinancialProduct'),
+('Payment', 'isA', 'FinancialTransaction'),
+('FinancialTransaction', 'isA', 'BankOperation'),
+('FinancialProduct', 'isA', 'BankAsset'),
+('BankAsset', 'isA', 'BankEntity'),
+('BankOperation', 'isA', 'BankEntity'),
+('Teller', 'isA', 'Employee'),
+('Employee', 'isA', 'BankEntity');
+
+
+Step 3: Recursive Inference Query (isA*)
+
+We’ll derive transitive isA relationships — e.g.
+if A isA B and B isA C, infer A isA C.
+
+# Recursive inference of transitive isA*
+WITH RECURSIVE isA_chain AS (
+    -- Base facts
+    SELECT s, o, 1 AS depth
+    FROM TRIPLE
+    WHERE p = 'isA'
+
+    UNION ALL
+
+# Transitive inference: if A→B and B→C, infer A→C
+    SELECT i.s, t.o, i.depth + 1
+    FROM isA_chain i
+    JOIN TRIPLE t
+      ON i.o = t.s
+     AND t.p = 'isA'
+)
+SELECT DISTINCT 
+    s AS child_class,
+    o AS ancestor_class,
+    MIN(depth) AS path_length
+FROM isA_chain
+GROUP BY s, o
+ORDER BY s, path_length;
+
+Step 4: Label Inferred Rows (Optional Enhancement)
+
+Add human-readable classification for clarity.
+
+# Label base vs inferred relationships
+WITH RECURSIVE isA_chain AS (
+    SELECT s, o, 1 AS depth, 'BASE' AS label
+    FROM TRIPLE
+    WHERE p = 'isA'
+
+    UNION ALL
+
+    SELECT i.s, t.o, i.depth + 1, 'INFERRED'
+    FROM isA_chain i
+    JOIN TRIPLE t
+      ON i.o = t.s
+     AND t.p = 'isA'
+)
+SELECT DISTINCT 
+    s AS entity,
+    o AS inferred_type,
+    label,
+    depth
+FROM isA_chain
+ORDER BY entity, depth;
+
+Step 5: Validation Roll-Up
+
+Confirm consistency between direct and inferred relationships.
+
+# Count base vs inferred relationships
+WITH RECURSIVE isA_chain AS (
+    SELECT s, o, 1 AS depth, 'BASE' AS label
+    FROM TRIPLE
+    WHERE p = 'isA'
+
+    UNION ALL
+
+    SELECT i.s, t.o, i.depth + 1, 'INFERRED'
+    FROM isA_chain i
+    JOIN TRIPLE t
+      ON i.o = t.s
+     AND t.p = 'isA'
+)
+SELECT label, COUNT(*) AS relation_count
+FROM (
+    SELECT DISTINCT s, o, label FROM isA_chain
+) sub
+GROUP BY label;
+
+
+B10: Business Limit Alert (Function + Trigger) (≤10 committed rows)
+# Objective
+
+Build an automated limit enforcement system using:
+
+A BUSINESS_LIMITS configuration table,
+
+A function that checks data (Loan/Payment) against the threshold, and
+
+A trigger that prevents violating inserts or updates.
+
+All while staying under the ≤10 committed row budget.
+
+ Step 1: Create BUSINESS_LIMITS Table
+DROP TABLE IF EXISTS BUSINESS_LIMITS;
+
+CREATE TABLE BUSINESS_LIMITS (
+    rule_key VARCHAR(64) PRIMARY KEY,
+    threshold NUMERIC(10,2) NOT NULL,
+    active CHAR(1) CHECK (active IN ('Y','N'))
+);
+
+
+# Purpose:
+Holds configurable alert thresholds — e.g., maximum allowed payment amount.
+
+ Step 2: Insert Exactly One Active Rule
+INSERT INTO BUSINESS_LIMITS (rule_key, threshold, active)
+VALUES ('MAX_PAYMENT_LIMIT', 1000.00, 'Y');
+
+Step 3: Create the Alert Function
+
+This function reads the active limit and returns 1 (violation) or 0 (ok).
+
+PostgreSQL Version
+CREATE OR REPLACE FUNCTION fn_should_alert(p_amount NUMERIC)
+RETURNS INT AS $$
+DECLARE
+    v_threshold NUMERIC(10,2);
+    v_active CHAR(1);
+BEGIN
+    SELECT threshold, active
+    INTO v_threshold, v_active
+    FROM BUSINESS_LIMITS
+    WHERE rule_key = 'MAX_PAYMENT_LIMIT'
+      AND active = 'Y'
+    LIMIT 1;
+
+    IF v_active = 'Y' AND p_amount > v_threshold THEN
+        RETURN 1;   violation
+    ELSE
+        RETURN 0;   allowed
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+
+Step 4: Trigger on PAYMENT
+
+Raises an exception if the rule is violated.
+
+DROP TRIGGER IF EXISTS trg_payment_limit_alert ON Payment;
+
+CREATE OR REPLACE FUNCTION trg_fn_payment_limit_alert()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF fn_should_alert(NEW.amount) = 1 THEN
+        RAISE EXCEPTION 'ORA-20001: Payment amount %. exceeds configured business limit.', NEW.amount;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_payment_limit_alert
+BEFORE INSERT OR UPDATE ON Payment
+FOR EACH ROW
+EXECUTE FUNCTION trg_fn_payment_limit_alert();
+
+
+ Behavior:
+Stops illegal inserts/updates before commit with a descriptive error.
+
+ Step 5: Test Script (2 Failing + 2 Passing)
+# CASE 1: Failing (over limit) → should ROLLBACK
+DO $$
+BEGIN
+    BEGIN
+        INSERT INTO Payment (paymentid, loanid, amount, pay_date)
+        VALUES (201, 1, 1200.00, CURRENT_DATE);
+    EXCEPTION
+        WHEN OTHERS THEN
+            RAISE NOTICE 'Expected failure: %', SQLERRM;
+            ROLLBACK;
+    END;
+END;
+$$;
+
+# CASE 2: Failing (over limit again)
+DO $$
+BEGIN
+    BEGIN
+        UPDATE Payment SET amount = 2000.00 WHERE paymentid = 101;
+    EXCEPTION
+        WHEN OTHERS THEN
+            RAISE NOTICE 'Expected failure: %', SQLERRM;
+            ROLLBACK;
+    END;
+END;
+$$;
+
+# CASE 3: Passing (within limit)
+INSERT INTO Payment (paymentid, loanid, amount, pay_date)
+VALUES (202, 1, 500.00, CURRENT_DATE);
+
+# CASE 4: Passing (edge of limit)
+INSERT INTO Payment (paymentid, loanid, amount, pay_date)
+VALUES (203, 1, 1000.00, CURRENT_DATE);
+
+
+The first two raise ORA-style exceptions and roll back.
+The last two succeed (≤ threshold).
+Row budget remains within total ≤10.
+
+Step 6: Verification
+
+#Confirm only 2 valid payments exist
+SELECT paymentid, amount, pay_date
+FROM Payment
+ORDER BY paymentid;
+

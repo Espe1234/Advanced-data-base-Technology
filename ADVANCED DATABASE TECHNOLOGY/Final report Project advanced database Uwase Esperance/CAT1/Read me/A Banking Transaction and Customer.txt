@@ -1,0 +1,1 @@
+A Banking Transaction and Customer Service Database is a system that stores and manages all information related to customers and their banking activities.
